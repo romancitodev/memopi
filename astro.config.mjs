@@ -4,6 +4,8 @@ import { defineConfig } from "astro/config";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import react from "@astrojs/react";
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -13,8 +15,11 @@ export default defineConfig({
     plugins: [tailwindcss()],
     resolve: {
       alias: {
-        "~": path.resolve(__dirname, "./src/*"),
+        "@/*": path.resolve(__dirname, "./memopi-rs/pkg/*"),
+        "~/*": path.resolve(__dirname, "./src/*"),
       },
     },
   },
+
+  integrations: [react()],
 });

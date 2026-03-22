@@ -1,0 +1,246 @@
+---
+
+---
+
+<div
+  id="pi-root"
+  class="flex flex-col items-center gap-6 px-6 w-full max-w-3xl"
+>
+  <div
+    id="pi-viewport"
+    class="relative w-full h-24 overflow-hidden cursor-text"
+  >
+    <input
+      id="pi-input"
+      type="text"
+      inputmode="numeric"
+      autocomplete="off"
+      autocorrect="off"
+      autocapitalize="off"
+      spellcheck="false"
+      class="z-10 absolute inset-0 opacity-0 w-full h-full cursor-text"
+    />
+
+    <div
+      id="pi-cursor"
+      class="top-1/2 z-20 absolute bg-white/60 w-px h-16 -translate-y-1/2 pointer-events-none"
+    >
+    </div>
+
+    <div
+      id="pi-tape"
+      class="top-0 left-0 absolute flex items-center h-full whitespace-nowrap tape-transition pointer-events-none"
+    >
+    </div>
+  </div>
+
+  <div class="font-mono text-white/30 text-sm tracking-widest select-none">
+    Current:&nbsp;<span id="pi-current" class="text-white/60">0</span>
+    <span class="mx-6 text-white/12">|</span>
+    Best:&nbsp;<span id="pi-best" class="text-white/60">0</span>
+  </div>
+
+  <button
+    id="pi-retry"
+    class="hidden px-6 py-2 border border-white/20 hover:border-white/40 rounded-lg font-mono text-white/60 hover:text-white text-sm tracking-widest transition-colors cursor-pointer"
+  >
+    Retry
+  </button>
+</div>
+
+<script>
+  import { PiGenerator } from "~/lib/pi";
+
+  const PREFIX = "3.14";
+  const PREFIX_LEN = PREFIX.length;
+  const HINT_COUNT = 5;
+  const FONT_SIZE = 52;
+  const CURSOR_RIGHT_OFFSET = 80;
+
+  const input = document.getElementById("pi-input") as HTMLInputElement;
+  const viewport = document.getElementById("pi-viewport") as HTMLElement;
+  const tape = document.getElementById("pi-tape") as HTMLElement;
+  const cursor = document.getElementById("pi-cursor") as HTMLElement;
+  const currentEl = document.getElementById("pi-current") as HTMLElement;
+  const bestEl = document.getElementById("pi-best") as HTMLElement;
+  const retryBtn = document.getElementById("pi-retry") as HTMLButtonElement;
+
+  let charWidth = 0;
+  let locked = false;
+
+  let best = parseInt(localStorage.getItem("pi-best") ?? "0", 10);
+  bestEl.textContent = String(best);
+
+  function measureChar() {
+    const probe = document.createElement("span");
+    probe.textContent = "0";
+    probe.style.cssText = `position:absolute;visibility:hidden;font-family:'Geist Mono Variable',monospace;font-size:${FONT_SIZE}px;font-variant-numeric:tabular-nums;`;
+    document.body.appendChild(probe);
+    charWidth = probe.getBoundingClientRect().width;
+    document.body.removeChild(probe);
+  }
+
+  input.value = PREFIX;
+
+  requestAnimationFrame(() => {
+    measureChar();
+    renderTape();
+    input.setSelectionRange(PREFIX_LEN, PREFIX_LEN);
+    input.focus();
+  });
+
+  viewport.addEventListener("click", () => input.focus());
+
+  retryBtn.addEventListener("click", () => {
+    locked = false;
+    retryBtn.classList.add("hidden");
+    input.value = PREFIX;
+    currentEl.textContent = "0";
+    renderTape();
+    requestAnimationFrame(() => {
+      input.setSelectionRange(PREFIX_LEN, PREFIX_LEN);
+      input.focus();
+    });
+  });
+
+  input.addEventListener("beforeinput", (e: InputEvent) => {
+    if (locked) {
+      e.preventDefault();
+      return;
+    }
+
+    if (e.inputType === "insertText" && e.data && !/^\d+$/.test(e.data)) {
+      e.preventDefault();
+      return;
+    }
+
+    const start = input.selectionStart ?? 0;
+    const end = input.selectionEnd ?? 0;
+    const deletesPrefix =
+      e.inputType.startsWith("delete") && start < PREFIX_LEN;
+    const replacesPrefix = start < PREFIX_LEN && end > start;
+
+    if (deletesPrefix || replacesPrefix) {
+      e.preventDefault();
+      input.setSelectionRange(
+        Math.max(start, PREFIX_LEN),
+        Math.max(end, PREFIX_LEN),
+      );
+    }
+  });
+
+  input.addEventListener("keydown", (e: KeyboardEvent) => {
+    if (locked) {
+      e.preventDefault();
+      return;
+    }
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? input.value.length;
+    if (e.key === "Backspace" && start <= PREFIX_LEN && start === end) {
+      e.preventDefault();
+    }
+  });
+
+  input.addEventListener("input", () => {
+    if (!input.value.startsWith(PREFIX)) {
+      input.value = PREFIX;
+      input.setSelectionRange(PREFIX_LEN, PREFIX_LEN);
+    }
+    renderTape();
+    updateStats();
+  });
+
+  function renderTape() {
+    const current = input.value;
+    const pi = new PiGenerator();
+
+    let html = "";
+    let firstWrong = -1;
+    let correctAtWrong = "";
+
+    for (let i = 0; i < current.length; i++) {
+      const expected = pi.nextDigit()!;
+      const isCorrect = current[i] === expected;
+
+      if (!isCorrect && firstWrong === -1) {
+        firstWrong = i;
+        correctAtWrong = expected;
+      }
+
+      let color: string;
+      if (i < PREFIX_LEN) {
+        color = "rgba(255,255,255,0.18)";
+      } else if (isCorrect) {
+        color = "#4ade80";
+      } else {
+        color = "#f87171";
+      }
+
+      html += spanChar(current[i], color);
+    }
+
+    // Right after the wrong digit: correct one in yellow, then HINT_COUNT hints in gray
+    if (firstWrong !== -1 && correctAtWrong) {
+      html += spanChar(correctAtWrong, "#facc15");
+      for (let j = 0; j < HINT_COUNT; j++) {
+        const hintChar = pi.nextDigit();
+        if (!hintChar) break;
+        html += spanChar(hintChar, "rgba(255,255,255,0.18)");
+      }
+    }
+
+    tape.innerHTML = html;
+
+    const totalSpans =
+      current.length + (firstWrong !== -1 ? 1 + HINT_COUNT : 0);
+    slideTape(totalSpans);
+    positionCursor(current.length);
+
+    if (firstWrong !== -1 && !locked) {
+      locked = true;
+      retryBtn.classList.remove("hidden");
+    }
+  }
+
+  function spanChar(ch: string, color: string): string {
+    return `<span class="pi-char" style="width:${charWidth}px;color:${color};">${ch}</span>`;
+  }
+
+  function slideTape(totalCount: number) {
+    const anchorX = viewport.clientWidth - CURSOR_RIGHT_OFFSET;
+    const tapeWidth = totalCount * charWidth;
+    const translate = Math.min(0, anchorX - tapeWidth);
+    tape.style.transform = `translateX(${translate}px)`;
+  }
+
+  function positionCursor(typedCount: number) {
+    const anchorX = viewport.clientWidth - CURSOR_RIGHT_OFFSET;
+    const naturalX = typedCount * charWidth;
+    cursor.style.left = `${Math.min(naturalX, anchorX)}px`;
+  }
+
+  function updateStats() {
+    const current = input.value;
+    const pi = new PiGenerator();
+    let correct = 0;
+
+    for (let i = 0; i < current.length; i++) {
+      const expected = pi.nextDigit()!;
+      if (current[i] !== expected) break;
+      if (i >= PREFIX_LEN) correct++;
+    }
+
+    currentEl.textContent = String(correct);
+
+    if (correct > best) {
+      best = correct;
+      localStorage.setItem("pi-best", String(best));
+      bestEl.textContent = String(best);
+    }
+  }
+
+  window.addEventListener("resize", () => {
+    measureChar();
+    renderTape();
+  });
+</script>
